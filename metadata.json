@@ -1,0 +1,5 @@
+{
+  "name": "Hiskon Photoshop",
+  "description": "An application to edit and create images using text prompts with Gemini 2.5 Flash Image, and get low-latency text responses with Gemini 2.5 Flash Lite.",
+  "requestFramePermissions": []
+}
