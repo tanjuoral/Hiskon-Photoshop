@@ -1,7 +1,7 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
 import { editOrCreateImage } from '../services/geminiService';
 import { fileToBase64 } from '../utils/fileUtils';
-import { UploadIcon, SparklesIcon, AdjustmentsIcon, ResetIcon, TransformIcon, RotateLeftIcon, RotateRightIcon, FlipHorizontalIcon, FlipVerticalIcon, CropIcon, LayersIcon, DrawIcon, TextIcon, HarmonizeIcon, UpscaleIcon, RemoveToolIcon, SelectSubjectIcon, SelectIcon, ShapeIcon, DownloadIcon, UndoIcon, RedoIcon } from './icons';
+import { UploadIcon, SparklesIcon, ResetIcon, TransformIcon, RotateLeftIcon, RotateRightIcon, FlipHorizontalIcon, FlipVerticalIcon, DownloadIcon, UndoIcon, RedoIcon } from './icons';
 import { LoadingSpinner } from './LoadingSpinner';
 
 const INITIAL_ADJUSTMENTS = {
@@ -20,7 +20,7 @@ const INITIAL_TRANSFORMS = {
     flip: { horizontal: false, vertical: false },
 };
 
-type ActiveTool = 'adjust' | 'transform' | 'crop' | 'draw' | 'text' | 'shape' | 'select' | 'harmonize' | 'remove' | null;
+export type ActiveTool = 'adjust' | 'transform' | 'crop' | 'draw' | 'text' | 'shape' | 'select' | 'harmonize' | 'remove' | null;
 type Adjustment = keyof typeof INITIAL_ADJUSTMENTS;
 type Point = { x: number, y: number };
 type Path = { points: Point[], color: string, size: number, id: string };
@@ -44,7 +44,20 @@ const INITIAL_EDIT_STATE: EditState = {
     shapes: [],
 };
 
-export const ImageStudio: React.FC = () => {
+export interface ImageStudioRef {
+  handleUpscale: () => void;
+  handleSelectSubject: () => void;
+}
+
+interface ImageStudioProps {
+    activeTool: ActiveTool;
+    setActiveTool: (tool: ActiveTool) => void;
+    isExportModalOpen: boolean;
+    setIsExportModalOpen: (isOpen: boolean) => void;
+    onImageStateChange: (isLoaded: boolean) => void;
+}
+
+export const ImageStudio = forwardRef<ImageStudioRef, ImageStudioProps>(({ activeTool, setActiveTool, isExportModalOpen, setIsExportModalOpen, onImageStateChange }, ref) => {
     const [originalImage, setOriginalImage] = useState<string | null>(null);
     const [generatedImage, setGeneratedImage] = useState<string | null>(null);
     const [prompt, setPrompt] = useState<string>('');
@@ -53,12 +66,9 @@ export const ImageStudio: React.FC = () => {
     const [fileName, setFileName] = useState<string>('');
 
     // Export states
-    const [isExportModalOpen, setIsExportModalOpen] = useState<boolean>(false);
     const [exportFormat, setExportFormat] = useState<'png' | 'jpeg'>('png');
     const [exportQuality, setExportQuality] = useState<number>(0.92);
     const [exportFileName, setExportFileName] = useState<string>('hiskon-photoshop-export');
-
-    const [activeTool, setActiveTool] = useState<ActiveTool>(null);
     
     // Edit States
     const [adjustments, setAdjustments] = useState(INITIAL_ADJUSTMENTS);
@@ -102,6 +112,10 @@ export const ImageStudio: React.FC = () => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const startPoint = useRef<Point | null>(null);
     const historyTimeoutRef = useRef<number | null>(null);
+
+    useEffect(() => {
+        onImageStateChange(!!originalImage);
+    }, [originalImage, onImageStateChange]);
     
     // --- History Management ---
     const recordHistory = useCallback((newStates: Partial<EditState>) => {
@@ -136,7 +150,7 @@ export const ImageStudio: React.FC = () => {
     };
     const handleRedo = () => {
         if (historyIndex < history.length - 1) {
-            setHistoryIndex(prev => prev + 1);
+            setHistoryIndex(prev => prev - 1);
         }
     };
 
@@ -528,45 +542,39 @@ export const ImageStudio: React.FC = () => {
         setSubjectMask(null);
     }
     
+    useImperativeHandle(ref, () => ({
+        handleUpscale,
+        handleSelectSubject,
+    }));
+
     const getCanvasCursor = () => {
         switch(activeTool) {
             case 'crop': return 'cursor-crosshair';
             case 'draw': return 'cursor-crosshair';
             case 'remove': return 'cursor-crosshair';
             case 'text': return 'cursor-text';
+            case 'shape': return 'cursor-crosshair';
             case 'select': return isDragging ? 'cursor-grabbing' : 'cursor-grab';
-            default: return '';
+            default: return 'cursor-default';
         }
     };
 
-    const ToolButton: React.FC<{ children: React.ReactNode, onClick: () => void, isActive?: boolean, disabled?: boolean, title?: string }> = ({ children, onClick, isActive, disabled, title }) => (
-        <button onClick={onClick} disabled={disabled} title={title} className={`flex items-center justify-center gap-2 p-2 rounded-md transition-colors text-sm ${isActive ? 'bg-brand-primary/80 text-white' : 'bg-gray-700 hover:bg-gray-600'} disabled:bg-gray-800 disabled:text-gray-500 disabled:cursor-not-allowed`}>
+    const ToolButton: React.FC<{ children: React.ReactNode, onClick: () => void, disabled?: boolean, title?: string }> = ({ children, onClick, disabled, title }) => (
+        <button onClick={onClick} disabled={disabled} title={title} className={`flex items-center justify-center gap-2 p-2 rounded-md transition-colors text-sm bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:text-gray-500 disabled:cursor-not-allowed`}>
             {children}
         </button>
     );
-    
-    const AIToolButton: React.FC<{ children: React.ReactNode, onClick: () => void, isActive?: boolean, disabled?: boolean, title?: string }> = (props) => (
-        <div className="relative">
-            <ToolButton {...props} />
-            <span className="absolute -top-1.5 -right-1.5 bg-brand-accent text-black text-[8px] font-bold px-1 rounded-full">BETA</span>
-        </div>
-    );
 
     return (
-        <div className="bg-dark-surface rounded-xl shadow-2xl p-6 h-full flex flex-col">
-            <h2 className="text-2xl font-bold mb-4 text-white flex items-center gap-2">
-                <SparklesIcon className="w-6 h-6 text-brand-accent" />
-                Image Studio
-            </h2>
-
-            <div className="flex-grow grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="bg-dark-surface rounded-xl shadow-2xl p-6 h-full w-full max-w-7xl flex flex-col overflow-hidden">
+            <div className="flex-grow grid grid-cols-1 md:grid-cols-2 gap-6 min-h-0">
                 {/* Editor Section */}
-                <div className="flex flex-col space-y-4">
-                    <div className="flex flex-col items-center justify-center bg-gray-900/50 rounded-lg p-4 border-2 border-dashed border-gray-600 min-h-[320px]">
+                <div className="flex flex-col space-y-4 min-h-0">
+                    <div className="flex-grow flex flex-col items-center justify-center bg-gray-900/50 rounded-lg p-2 border-2 border-dashed border-gray-600 relative overflow-auto">
                          {originalImage ? (
-                            <canvas ref={canvasRef} className={`max-h-[300px] w-auto rounded-md object-contain ${getCanvasCursor()}`} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUpOrLeave} onMouseLeave={handleMouseUpOrLeave} />
+                            <canvas ref={canvasRef} className={`max-h-full max-w-full object-contain rounded-md ${getCanvasCursor()}`} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUpOrLeave} onMouseLeave={handleMouseUpOrLeave} />
                         ) : (
-                            <label htmlFor="file-upload" className="cursor-pointer text-center">
+                            <label htmlFor="file-upload" className="cursor-pointer text-center p-4">
                                 <div className="flex flex-col items-center text-dark-text-secondary">
                                     <UploadIcon className="w-12 h-12 mb-2" />
                                     <span className="font-semibold">Click to upload an image</span>
@@ -575,53 +583,31 @@ export const ImageStudio: React.FC = () => {
                             </label>
                         )}
                         <input id="file-upload" type="file" className="hidden" accept="image/*" onChange={(e) => handleFileChange(e, setOriginalImage)} />
-                        {fileName && <p className="text-xs text-dark-text-secondary mt-2 truncate max-w-full">{fileName}</p>}
+                        {fileName && <p className="absolute bottom-2 left-2 right-2 text-xs text-dark-text-secondary truncate bg-black/30 p-1 rounded">{fileName}</p>}
                     </div>
+                     {originalImage && (
+                        <div className="flex-shrink-0 flex justify-center gap-2">
+                            <label htmlFor="file-upload" className="flex items-center justify-center gap-2 p-2 rounded-md transition-colors text-sm bg-gray-700 hover:bg-gray-600 cursor-pointer">
+                                <UploadIcon className="w-5 h-5"/> New
+                            </label>
+                            <ToolButton onClick={handleUndo} disabled={historyIndex <= 0} title="Undo"><UndoIcon className="w-5 h-5" /></ToolButton>
+                            <ToolButton onClick={handleRedo} disabled={historyIndex >= history.length - 1} title="Redo"><RedoIcon className="w-5 h-5" /></ToolButton>
+                            <ToolButton onClick={handleFullReset} title="Reset All"><ResetIcon className="w-5 h-5" /></ToolButton>
+                        </div>
+                    )}
+                    {/* TOOL PANELS */}
                     {originalImage && (
-                        <>
-                           <div className="flex justify-center gap-2">
-                                <label htmlFor="file-upload" className="flex items-center justify-center gap-2 p-2 rounded-md transition-colors text-sm bg-gray-700 hover:bg-gray-600 cursor-pointer">
-                                    <UploadIcon className="w-5 h-5"/> New
-                                </label>
-                                <ToolButton onClick={handleUndo} disabled={historyIndex <= 0} title="Undo"><UndoIcon className="w-5 h-5" /></ToolButton>
-                                <ToolButton onClick={handleRedo} disabled={historyIndex >= history.length - 1} title="Redo"><RedoIcon className="w-5 h-5" /></ToolButton>
-                                <ToolButton onClick={handleFullReset} title="Reset All"><ResetIcon className="w-5 h-5" /></ToolButton>
-                                <ToolButton onClick={() => setIsExportModalOpen(true)} title="Export"><DownloadIcon className="w-5 h-5" /></ToolButton>
-                            </div>
-                           <div className="bg-gray-900/50 rounded-lg p-2">
-                                <p className="text-xs font-bold text-dark-text-secondary mb-2 px-2">CREATIVE TOOLS</p>
-                                <div className="grid grid-cols-3 sm:grid-cols-7 gap-2">
-                                    <ToolButton onClick={() => setActiveTool(activeTool === 'select' ? null : 'select')} isActive={activeTool === 'select'} title="Select & Move"><SelectIcon className="w-5 h-5"/></ToolButton>
-                                    <ToolButton onClick={() => {}} disabled={true} title="Layers (coming soon)"><LayersIcon className="w-5 h-5"/></ToolButton>
-                                    <ToolButton onClick={() => setActiveTool(activeTool === 'draw' ? null : 'draw')} isActive={activeTool === 'draw'} title="Draw"><DrawIcon className="w-5 h-5"/></ToolButton>
-                                    <ToolButton onClick={() => setActiveTool(activeTool === 'text' ? null : 'text')} isActive={activeTool === 'text'} title="Text"><TextIcon className="w-5 h-5"/></ToolButton>
-                                    <ToolButton onClick={() => setActiveTool(activeTool === 'shape' ? null : 'shape')} isActive={activeTool === 'shape'} title="Shape"><ShapeIcon className="w-5 h-5"/></ToolButton>
-                                    <ToolButton onClick={() => setActiveTool(activeTool === 'adjust' ? null : 'adjust')} isActive={activeTool === 'adjust'} title="Adjustments"><AdjustmentsIcon className="w-5 h-5"/></ToolButton>
-                                    <ToolButton onClick={() => setActiveTool(activeTool === 'transform' ? null : 'transform')} isActive={activeTool === 'transform'} title="Transform"><TransformIcon className="w-5 h-5"/></ToolButton>
-                                    <ToolButton onClick={() => setActiveTool(activeTool === 'crop' ? null : 'crop')} isActive={activeTool === 'crop'} title="Crop"><CropIcon className="w-5 h-5"/></ToolButton>
-                                </div>
-                            </div>
-                             <div className="bg-gray-900/50 rounded-lg p-2">
-                                <p className="text-xs font-bold text-dark-text-secondary mb-2 px-2">AI TOOLS</p>
-                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                                    <AIToolButton onClick={() => setActiveTool(activeTool === 'harmonize' ? null : 'harmonize')} isActive={activeTool === 'harmonize'} title="Harmonize"><HarmonizeIcon className="w-5 h-5" /> Harmonize</AIToolButton>
-                                    <AIToolButton onClick={handleUpscale} title="Generative Upscale"><UpscaleIcon className="w-5 h-5" /> Upscale</AIToolButton>
-                                    <AIToolButton onClick={() => setActiveTool(activeTool === 'remove' ? null : 'remove')} isActive={activeTool === 'remove'} title="Remove Tool"><RemoveToolIcon className="w-5 h-5" /> Remove</AIToolButton>
-                                    <AIToolButton onClick={handleSelectSubject} title="Select Subject"><SelectSubjectIcon className="w-5 h-5" /> Select</AIToolButton>
-                                </div>
-                            </div>
-                            
-                            {/* TOOL PANELS */}
+                        <div className="bg-gray-900/50 rounded-lg max-h-48 overflow-y-auto">
                             {subjectMask && (
-                                 <div className="bg-gray-900/50 rounded-lg p-4 space-y-3">
+                                <div className="p-4 space-y-3">
                                     <p className="text-sm font-bold text-center">Subject Selected</p>
                                     <p className="text-xs text-dark-text-secondary text-center">Mask applied. You can now act on this selection.</p>
                                     <button onClick={handleRemoveBackground} className="w-full bg-brand-secondary text-white font-bold py-2 px-4 rounded-md hover:bg-green-600 disabled:bg-gray-500">Remove Background</button>
                                 </div>
                             )}
                             {activeTool === 'harmonize' && (
-                                 <div className="bg-gray-900/50 rounded-lg p-4 space-y-3">
-                                    <label htmlFor="foreground-upload" className="w-full text-center cursor-pointer bg-gray-700 hover:bg-gray-600 p-3 rounded-md text-sm">
+                                <div className="p-4 space-y-3">
+                                    <label htmlFor="foreground-upload" className="w-full text-center cursor-pointer bg-gray-700 hover:bg-gray-600 p-3 rounded-md text-sm block">
                                         {foregroundImage ? "Change Foreground Image" : "Upload Foreground Image"}
                                     </label>
                                     <input id="foreground-upload" type="file" className="hidden" accept="image/*" onChange={e => handleFileChange(e, setForegroundImage)} />
@@ -630,14 +616,14 @@ export const ImageStudio: React.FC = () => {
                                 </div>
                             )}
                             {activeTool === 'remove' && (
-                                <div className="bg-gray-900/50 rounded-lg p-4 space-y-3">
+                                <div className="p-4 space-y-3">
                                     <p className="text-xs text-dark-text-secondary">Paint over the area you want to remove.</p>
                                     <input type="range" min="5" max="100" value={removeBrushSize} onChange={e => setRemoveBrushSize(Number(e.target.value))} className="w-full"/>
                                     <button onClick={handleApplyRemove} disabled={removeMask.length === 0} className="w-full bg-brand-secondary text-white font-bold py-2 px-4 rounded-md hover:bg-green-600 disabled:bg-gray-500">Apply Remove Tool</button>
                                 </div>
                             )}
                             {activeTool === 'shape' && (
-                                 <div className="bg-gray-900/50 rounded-lg p-4 space-y-3">
+                                <div className="p-4 space-y-3">
                                     <div className="flex justify-around">
                                         <button onClick={() => setShapeType('rectangle')} className={shapeType === 'rectangle' ? 'text-brand-primary' : ''}>Rectangle</button>
                                         <button onClick={() => setShapeType('circle')} className={shapeType === 'circle' ? 'text-brand-primary' : ''}>Circle</button>
@@ -651,14 +637,14 @@ export const ImageStudio: React.FC = () => {
                                 </div>
                             )}
                             {activeTool === 'draw' && (
-                                <div className="bg-gray-900/50 rounded-lg p-4 space-y-3">
+                                <div className="p-4 space-y-3">
                                     <div className="flex items-center gap-4"><label className="text-sm">Color</label><input type="color" value={brushColor} onChange={e => setBrushColor(e.target.value)} className="w-8 h-8"/></div>
                                     <input type="range" min="1" max="50" value={brushSize} onChange={e => setBrushSize(Number(e.target.value))} className="w-full"/>
                                 </div>
                             )}
                             {activeTool === 'text' && (
-                                <div className="bg-gray-900/50 rounded-lg p-4 space-y-3">
-                                     <p className="text-xs text-dark-text-secondary">Click on the image to set text position.</p>
+                                <div className="p-4 space-y-3">
+                                    <p className="text-xs text-dark-text-secondary">Click on the image to set text position.</p>
                                     <input type="text" value={currentText} onChange={e => setCurrentText(e.target.value)} placeholder="Type your text..." className="w-full bg-gray-800 border border-gray-600 rounded-md p-2"/>
                                     <div className="grid grid-cols-2 gap-4">
                                         <div className="flex items-center gap-2"><label>Color</label><input type="color" value={textColor} onChange={e => setTextColor(e.target.value)} className="w-8 h-8"/></div>
@@ -673,9 +659,9 @@ export const ImageStudio: React.FC = () => {
                                 </div>
                             )}
                             {activeTool === 'adjust' && (
-                                <div className="bg-gray-900/50 rounded-lg p-4 space-y-3">
+                                <div className="p-4 space-y-3">
                                     {Object.keys(adjustments).map(key => (
-                                         <div key={key} className="grid grid-cols-4 items-center">
+                                        <div key={key} className="grid grid-cols-4 items-center">
                                             <label className="text-xs capitalize col-span-1">{key.replace('Rotate', ' Rotate')}</label>
                                             <input type="range" name={key}
                                                 min={key === 'blur' ? 0 : (key === 'hueRotate' ? 0 : 0)}
@@ -692,8 +678,8 @@ export const ImageStudio: React.FC = () => {
                                     ))}
                                 </div>
                             )}
-                             {activeTool === 'transform' && (
-                                <div className="bg-gray-900/50 rounded-lg p-4 grid grid-cols-2 gap-2">
+                            {activeTool === 'transform' && (
+                                <div className="p-4 grid grid-cols-2 gap-2">
                                     <ToolButton onClick={() => { const t = { ...transforms, rotate: (transforms.rotate-90+360)%360}; setTransforms(t); recordHistory({transforms: t}); }}><RotateLeftIcon className="w-5 h-5"/>Rotate</ToolButton>
                                     <ToolButton onClick={() => { const t = { ...transforms, rotate: (transforms.rotate+90)%360}; setTransforms(t); recordHistory({transforms: t}); }}><RotateRightIcon className="w-5 h-5"/>Rotate</ToolButton>
                                     <ToolButton onClick={() => { const t = { ...transforms, flip: {...transforms.flip, horizontal:!transforms.flip.horizontal}}; setTransforms(t); recordHistory({transforms: t}); }}><FlipHorizontalIcon className="w-5 h-5"/>Flip</ToolButton>
@@ -701,12 +687,12 @@ export const ImageStudio: React.FC = () => {
                                 </div>
                             )}
                             {activeTool === 'crop' && cropRect && (
-                                <div className="bg-gray-900/50 rounded-lg p-4 flex justify-center gap-4">
+                                <div className="p-4 flex justify-center gap-4">
                                     <button onClick={handleApplyCrop} className="flex items-center justify-center bg-brand-secondary text-white font-bold py-2 px-4 rounded-md">Apply Crop</button>
                                     <button onClick={() => { setActiveTool(null); setCropRect(null); }} className="flex items-center justify-center bg-gray-700 text-white font-bold py-2 px-4 rounded-md">Cancel</button>
                                 </div>
                             )}
-                        </>
+                        </div>
                     )}
                 </div>
 
@@ -715,7 +701,7 @@ export const ImageStudio: React.FC = () => {
                     {isLoading ? ( <div className="flex flex-col items-center text-dark-text-secondary"><LoadingSpinner /><p className="mt-2">Generating your masterpiece...</p></div>
                     ) : generatedImage ? ( 
                         <div className="text-center">
-                            <img src={generatedImage} alt="Generated" className="max-h-80 rounded-md object-contain" />
+                            <img src={generatedImage} alt="Generated" className="max-h-[calc(100%-4rem)] max-w-full rounded-md object-contain" />
                             <div className="flex gap-4 mt-4 justify-center">
                                 <button onClick={handleAcceptGeneratedImage} className="bg-brand-secondary hover:bg-green-600 text-white font-bold py-2 px-4 rounded-md">Accept</button>
                                 <button onClick={() => setGeneratedImage(null)} className="bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-md">Discard</button>
@@ -725,14 +711,16 @@ export const ImageStudio: React.FC = () => {
                 </div>
             </div>
 
-            {error && <p className="text-red-400 mt-4 text-sm">{error}</p>}
-
-            <div className="mt-6 flex flex-col sm:flex-row gap-4">
-                <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder={originalImage ? "Describe your AI edit..." : "Describe the image you want to create..."} className="flex-grow bg-gray-800 border border-gray-600 rounded-md p-3" rows={2}/>
-                <button onClick={() => handleSubmit()} disabled={isLoading || !prompt} className="flex items-center justify-center bg-brand-primary text-white font-bold py-3 px-6 rounded-md hover:bg-blue-600 disabled:bg-gray-500">
-                    {isLoading ? <LoadingSpinner /> : <SparklesIcon className="w-5 h-5 mr-2" />}
-                    <span>{originalImage ? 'Edit with AI' : 'Create Image'}</span>
-                </button>
+            <div className="flex-shrink-0 pt-4 space-y-4">
+                {error && <p className="text-red-400 text-sm">{error}</p>}
+                
+                <div className="flex flex-col sm:flex-row gap-4">
+                    <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder={originalImage ? "Describe your AI edit..." : "Describe the image you want to create..."} className="flex-grow bg-gray-800 border border-gray-600 rounded-md p-3" rows={2}/>
+                    <button onClick={() => handleSubmit()} disabled={isLoading || !prompt} className="flex items-center justify-center bg-brand-primary text-white font-bold py-3 px-6 rounded-md hover:bg-blue-600 disabled:bg-gray-500">
+                        {isLoading ? <LoadingSpinner /> : <SparklesIcon className="w-5 h-5 mr-2" />}
+                        <span>{originalImage ? 'Edit with AI' : 'Create Image'}</span>
+                    </button>
+                </div>
             </div>
 
             {isExportModalOpen && (
@@ -797,4 +785,4 @@ export const ImageStudio: React.FC = () => {
             )}
         </div>
     );
-};
+});

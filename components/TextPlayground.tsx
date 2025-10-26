@@ -1,11 +1,10 @@
-
 import React, { useState, useRef } from 'react';
 import { generateTextStream, analyzeImageStream } from '../services/geminiService';
 import { fileToBase64 } from '../utils/fileUtils';
 import { LightningBoltIcon, ChatIcon, UploadIcon, XIcon } from './icons';
 import { LoadingSpinner } from './LoadingSpinner';
 
-export const TextPlayground: React.FC = () => {
+export const TextPlayground: React.FC<{onClose: () => void}> = ({ onClose }) => {
   const [prompt, setPrompt] = useState<string>('');
   const [result, setResult] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -72,17 +71,19 @@ export const TextPlayground: React.FC = () => {
   };
 
   return (
-    <div className="bg-dark-surface rounded-xl shadow-2xl p-6 h-full flex flex-col">
-      <h2 className="text-2xl font-bold mb-4 text-white flex items-center gap-2">
-        <LightningBoltIcon className="w-6 h-6 text-brand-secondary" />
-        Text Playground
-      </h2>
-      <p className="text-sm text-dark-text-secondary mb-4">
-        {image ? "Analyze an image or ask a question about it." : "Get quick, low-latency text responses from Gemini."}
-      </p>
+    <div className="p-6 h-full flex flex-col">
+      <div className="flex items-center justify-between mb-4 flex-shrink-0">
+        <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+          <LightningBoltIcon className="w-6 h-6 text-brand-secondary" />
+          AI Assistant
+        </h2>
+        <button onClick={onClose} className="p-1 rounded-full text-dark-text-secondary hover:bg-gray-700" title="Close panel">
+            <XIcon className="w-5 h-5" />
+        </button>
+      </div>
 
       {image && (
-        <div className="relative mb-4 group">
+        <div className="relative mb-4 group flex-shrink-0">
           <img src={image} alt="Analysis subject" className="max-h-48 w-auto rounded-lg object-contain mx-auto" />
           <button 
             onClick={handleRemoveImage} 
@@ -101,16 +102,16 @@ export const TextPlayground: React.FC = () => {
         {result ? (
           <p>{result}</p>
         ) : (
-            <div className="flex flex-col items-center justify-center h-full text-dark-text-secondary">
+            <div className="flex flex-col items-center justify-center h-full text-dark-text-secondary text-center">
                 <ChatIcon className="w-12 h-12" />
                 <p className="mt-2">Your response will stream here...</p>
             </div>
         )}
       </div>
 
-      {error && <p className="text-red-400 mt-4 text-sm">{error}</p>}
+      {error && <p className="text-red-400 mt-4 text-sm flex-shrink-0">{error}</p>}
       
-      <div className="mt-6 flex flex-col sm:flex-row gap-4">
+      <div className="mt-6 flex flex-col sm:flex-row gap-4 flex-shrink-0">
         <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
         <button
           onClick={() => fileInputRef.current?.click()}
