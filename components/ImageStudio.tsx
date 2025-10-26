@@ -1,8 +1,7 @@
-
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { editOrCreateImage } from '../services/geminiService';
 import { fileToBase64 } from '../utils/fileUtils';
-import { UploadIcon, SparklesIcon, AdjustmentsIcon, ResetIcon, TransformIcon, RotateLeftIcon, RotateRightIcon, FlipHorizontalIcon, FlipVerticalIcon, CropIcon, LayersIcon, DrawIcon, TextIcon, HarmonizeIcon, UpscaleIcon, RemoveToolIcon, SelectSubjectIcon, SelectIcon, ShapeIcon } from './icons';
+import { UploadIcon, SparklesIcon, AdjustmentsIcon, ResetIcon, TransformIcon, RotateLeftIcon, RotateRightIcon, FlipHorizontalIcon, FlipVerticalIcon, CropIcon, LayersIcon, DrawIcon, TextIcon, HarmonizeIcon, UpscaleIcon, RemoveToolIcon, SelectSubjectIcon, SelectIcon, ShapeIcon, DownloadIcon, UndoIcon, RedoIcon } from './icons';
 import { LoadingSpinner } from './LoadingSpinner';
 
 const INITIAL_ADJUSTMENTS = {
@@ -29,6 +28,22 @@ type TextElement = { text: string, x: number, y: number, color: string, size: nu
 type ShapeType = 'rectangle' | 'circle' | 'line';
 type ShapeElement = { type: ShapeType, x1: number, y1: number, x2: number, y2: number, color: string, strokeWidth: number, id: string };
 
+type EditState = {
+    adjustments: typeof INITIAL_ADJUSTMENTS;
+    transforms: typeof INITIAL_TRANSFORMS;
+    paths: Path[];
+    texts: TextElement[];
+    shapes: ShapeElement[];
+};
+
+const INITIAL_EDIT_STATE: EditState = {
+    adjustments: INITIAL_ADJUSTMENTS,
+    transforms: INITIAL_TRANSFORMS,
+    paths: [],
+    texts: [],
+    shapes: [],
+};
+
 export const ImageStudio: React.FC = () => {
     const [originalImage, setOriginalImage] = useState<string | null>(null);
     const [generatedImage, setGeneratedImage] = useState<string | null>(null);
@@ -37,18 +52,26 @@ export const ImageStudio: React.FC = () => {
     const [error, setError] = useState<string | null>(null);
     const [fileName, setFileName] = useState<string>('');
 
+    // Export states
+    const [isExportModalOpen, setIsExportModalOpen] = useState<boolean>(false);
+    const [exportFormat, setExportFormat] = useState<'png' | 'jpeg'>('png');
+    const [exportQuality, setExportQuality] = useState<number>(0.92);
+    const [exportFileName, setExportFileName] = useState<string>('hiskon-photoshop-export');
+
     const [activeTool, setActiveTool] = useState<ActiveTool>(null);
+    
+    // Edit States
     const [adjustments, setAdjustments] = useState(INITIAL_ADJUSTMENTS);
     const [transforms, setTransforms] = useState(INITIAL_TRANSFORMS);
+    const [paths, setPaths] = useState<Path[]>([]);
+    const [texts, setTexts] = useState<TextElement[]>([]);
+    const [shapes, setShapes] = useState<ShapeElement[]>([]);
     
     // Tool States
     const [cropRect, setCropRect] = useState<{ x: number, y: number, width: number, height: number } | null>(null);
     const [isDrawing, setIsDrawing] = useState(false);
-    const [paths, setPaths] = useState<Path[]>([]);
     const [brushColor, setBrushColor] = useState('#ffffff');
     const [brushSize, setBrushSize] = useState(5);
-
-    const [texts, setTexts] = useState<TextElement[]>([]);
     const [currentText, setCurrentText] = useState('');
     const [textColor, setTextColor] = useState('#ffffff');
     const [textSize, setTextSize] = useState(32);
@@ -56,8 +79,6 @@ export const ImageStudio: React.FC = () => {
     const [hasTextOutline, setHasTextOutline] = useState(false);
     const [textOutlineColor, setTextOutlineColor] = useState('#000000');
     const [textOutlineSize, setTextOutlineSize] = useState(2);
-    
-    const [shapes, setShapes] = useState<ShapeElement[]>([]);
     const [shapeType, setShapeType] = useState<ShapeType>('rectangle');
     const [shapeColor, setShapeColor] = useState('#4285F4');
     const [shapeStrokeWidth, setShapeStrokeWidth] = useState(4);
@@ -73,10 +94,82 @@ export const ImageStudio: React.FC = () => {
     const [removeBrushSize, setRemoveBrushSize] = useState(20);
     const [subjectMask, setSubjectMask] = useState<string | null>(null);
 
+    // History states
+    const [history, setHistory] = useState<EditState[]>([]);
+    const [historyIndex, setHistoryIndex] = useState(-1);
+
     const imageRef = useRef<HTMLImageElement>(new Image());
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const startPoint = useRef<Point | null>(null);
+    const historyTimeoutRef = useRef<number | null>(null);
     
+    // --- History Management ---
+    const recordHistory = useCallback((newStates: Partial<EditState>) => {
+        const nextState: EditState = {
+            adjustments,
+            transforms,
+            paths,
+            texts,
+            shapes,
+            ...newStates,
+        };
+
+        const newHistory = history.slice(0, historyIndex + 1);
+        newHistory.push(nextState);
+        setHistory(newHistory);
+        setHistoryIndex(newHistory.length - 1);
+    }, [history, historyIndex, adjustments, transforms, paths, texts, shapes]);
+
+    const recordHistoryWithDebounce = useCallback((newStates: Partial<EditState>) => {
+        if (historyTimeoutRef.current) {
+            clearTimeout(historyTimeoutRef.current);
+        }
+        historyTimeoutRef.current = window.setTimeout(() => {
+            recordHistory(newStates);
+        }, 400);
+    }, [recordHistory]);
+
+    const handleUndo = () => {
+        if (historyIndex > 0) {
+            setHistoryIndex(prev => prev - 1);
+        }
+    };
+    const handleRedo = () => {
+        if (historyIndex < history.length - 1) {
+            setHistoryIndex(prev => prev + 1);
+        }
+    };
+
+    useEffect(() => {
+        if (historyIndex < 0 || historyIndex >= history.length) return;
+        const stateToRestore = history[historyIndex];
+        if (stateToRestore) {
+            setAdjustments(stateToRestore.adjustments);
+            setTransforms(stateToRestore.transforms);
+            setPaths(stateToRestore.paths);
+            setTexts(stateToRestore.texts);
+            setShapes(stateToRestore.shapes);
+        }
+    }, [history, historyIndex]);
+
+    const resetEdits = (initialState = INITIAL_EDIT_STATE) => {
+        setAdjustments(initialState.adjustments);
+        setTransforms(initialState.transforms);
+        setPaths(initialState.paths);
+        setTexts(initialState.texts);
+        setShapes(initialState.shapes);
+        setActiveTool(null);
+        setCropRect(null);
+        setTextPosition(null);
+        setCurrentText('');
+        setSelectedElement(null);
+        setForegroundImage(null);
+        setRemoveMask([]);
+        setSubjectMask(null);
+        setHistory([initialState]);
+        setHistoryIndex(0);
+    };
+
     useEffect(() => {
         const image = imageRef.current;
         const canvas = canvasRef.current;
@@ -148,9 +241,11 @@ export const ImageStudio: React.FC = () => {
             if (subjectMask) {
                 const maskImg = new Image();
                 maskImg.src = subjectMask;
-                ctx.globalAlpha = 0.5;
-                ctx.drawImage(maskImg, 0, 0, canvas.width, canvas.height);
-                ctx.globalAlpha = 1.0;
+                maskImg.onload = () => {
+                    ctx.globalAlpha = 0.5;
+                    ctx.drawImage(maskImg, 0, 0, canvas.width, canvas.height);
+                    ctx.globalAlpha = 1.0;
+                }
             }
 
             if (activeTool === 'crop' && cropRect) {
@@ -191,11 +286,15 @@ export const ImageStudio: React.FC = () => {
     const handleFileChange = useCallback(async (event: React.ChangeEvent<HTMLInputElement>, setImageFunc: (b64: string) => void) => {
         const file = event.target.files?.[0];
         if (file) {
-            if (setImageFunc === setOriginalImage) handleReset();
+            if (setImageFunc === setOriginalImage) handleFullReset();
             try {
                 const base64 = await fileToBase64(file);
                 setImageFunc(base64);
-                if (setImageFunc === setOriginalImage) setFileName(file.name);
+                if (setImageFunc === setOriginalImage) {
+                    setFileName(file.name);
+                    setExportFileName(file.name.substring(0, file.name.lastIndexOf('.')) || file.name);
+                    resetEdits();
+                }
             } catch (err) {
                 setError('Failed to read file.');
             }
@@ -234,10 +333,13 @@ export const ImageStudio: React.FC = () => {
         }
     };
 
-    const handleReset = () => {
-        setGeneratedImage(null); setError(null); setAdjustments(INITIAL_ADJUSTMENTS); setTransforms(INITIAL_TRANSFORMS); setActiveTool(null);
-        setCropRect(null); setPaths([]); setTexts([]); setTextPosition(null); setCurrentText(''); setShapes([]); setSelectedElement(null);
-        setForegroundImage(null); setRemoveMask([]); setSubjectMask(null);
+    const handleFullReset = () => {
+        setOriginalImage(null);
+        setGeneratedImage(null); 
+        setError(null);
+        setFileName('');
+        setExportFileName('hiskon-photoshop-export');
+        resetEdits();
     }
     
     const getCanvasCoordinates = (event: React.MouseEvent<HTMLCanvasElement>): Point | null => {
@@ -315,7 +417,16 @@ export const ImageStudio: React.FC = () => {
         }
     };
     
-    const handleMouseUpOrLeave = () => { setIsDrawing(false); setIsDragging(false); startPoint.current = null; };
+    const handleMouseUpOrLeave = () => {
+        if (isDrawing) {
+            if (activeTool === 'draw') recordHistory({ paths });
+            else if (activeTool === 'shape') recordHistory({ shapes });
+            else if (activeTool === 'select' && isDragging) recordHistory({ texts, shapes });
+        }
+        setIsDrawing(false); 
+        setIsDragging(false); 
+        startPoint.current = null; 
+    };
 
     const handleApplyCrop = () => {
         if (!cropRect || !canvasRef.current || cropRect.width <= 0 || cropRect.height <= 0) return;
@@ -325,20 +436,54 @@ export const ImageStudio: React.FC = () => {
         const cropCtx = cropCanvas.getContext('2d'); if (!cropCtx) return;
         cropCanvas.width = width; cropCanvas.height = height;
         cropCtx.drawImage(sourceCanvas, x, y, width, height, 0, 0, width, height);
-        handleReset();
+        
         setOriginalImage(cropCanvas.toDataURL('image/png'));
-        setFileName('cropped-image.png');
+        const newFileName = 'cropped-image.png';
+        setFileName(newFileName);
+        setExportFileName('cropped-image');
+        resetEdits();
     };
     
     const handleAddText = () => {
         if (currentText.trim() && textPosition) {
-            // FIX: Use `hasTextOutline` state variable for the `hasOutline` property.
-            setTexts(prev => [...prev, { text: currentText, x: textPosition.x, y: textPosition.y, color: textColor, size: textSize, id: Date.now().toString(), hasOutline: hasTextOutline, outlineColor: textOutlineColor, outlineWidth: textOutlineSize }]);
-            setCurrentText(''); setTextPosition(null);
+            const newTexts = [...texts, { text: currentText, x: textPosition.x, y: textPosition.y, color: textColor, size: textSize, id: Date.now().toString(), hasOutline: hasTextOutline, outlineColor: textOutlineColor, outlineWidth: textOutlineSize }];
+            setTexts(newTexts);
+            recordHistory({ texts: newTexts });
+            setCurrentText(''); 
+            setTextPosition(null);
         }
+    };
+
+    const handleDownload = () => {
+        if (!canvasRef.current) return;
+
+        const canvas = canvasRef.current;
+        const mimeType = `image/${exportFormat}`;
+        const quality = exportFormat === 'jpeg' ? exportQuality : undefined;
+        const dataUrl = canvas.toDataURL(mimeType, quality);
+
+        const link = document.createElement('a');
+        link.href = dataUrl;
+        link.download = `${exportFileName || 'download'}.${exportFormat}`;
+        
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+
+        setIsExportModalOpen(false);
     };
     
     // AI TOOL HANDLERS
+    const handleAcceptGeneratedImage = () => {
+        if (!generatedImage) return;
+        const newFileName = `${(fileName || 'generated').split('.')[0]}-ai-edit.png`;
+        setOriginalImage(generatedImage);
+        setFileName(newFileName);
+        setExportFileName(newFileName.substring(0, newFileName.lastIndexOf('.')));
+        setGeneratedImage(null);
+        resetEdits();
+    };
+
     const handleApplyRemove = async () => {
         if (!originalImage || removeMask.length === 0) return;
         const maskCanvas = document.createElement('canvas');
@@ -358,14 +503,15 @@ export const ImageStudio: React.FC = () => {
         });
         const maskDataUrl = maskCanvas.toDataURL('image/png');
         const currentCanvasImage = canvasRef.current?.toDataURL('image/png');
-        await handleSubmit("Remove the area indicated by the white mask.", [currentCanvasImage || null, maskDataUrl]);
+        await handleSubmit("In the first image, remove the area that is white in the second image which is a mask. The output should be the first image with the masked area removed and realistically filled in.", [currentCanvasImage || null, maskDataUrl]);
         setRemoveMask([]);
     }
     
     const handleUpscale = async () => handleSubmit("Upscale this image to a higher resolution, improving quality, clarity, and sharpness. Make it look like 8 megapixels.", [canvasRef.current?.toDataURL('image/png') || null]);
     const handleHarmonize = async () => handleSubmit("Harmonize the two images. The first is the background, the second is a foreground object. Seamlessly integrate the object into the background, adjusting lighting and colors for a realistic result.", [canvasRef.current?.toDataURL('image/png') || null, foregroundImage]);
+    
     const handleSelectSubject = async () => {
-        setIsLoading(true); setError(null);
+        setIsLoading(true); setError(null); setSubjectMask(null);
         try {
             const result = await editOrCreateImage("Create a black and white mask of the main subject of this image. The subject should be white and the background black.", [canvasRef.current?.toDataURL('image/png') || null]);
             setSubjectMask(result);
@@ -374,6 +520,12 @@ export const ImageStudio: React.FC = () => {
         } finally {
             setIsLoading(false);
         }
+    }
+
+    const handleRemoveBackground = async () => {
+        if (!subjectMask) return;
+        await handleSubmit("Remove the background of the first image. The second image is a mask where the white area is the subject to keep. Make the background transparent.", [canvasRef.current?.toDataURL('image/png') || null, subjectMask]);
+        setSubjectMask(null);
     }
     
     const getCanvasCursor = () => {
@@ -411,22 +563,31 @@ export const ImageStudio: React.FC = () => {
                 {/* Editor Section */}
                 <div className="flex flex-col space-y-4">
                     <div className="flex flex-col items-center justify-center bg-gray-900/50 rounded-lg p-4 border-2 border-dashed border-gray-600 min-h-[320px]">
-                        <label htmlFor="file-upload" className="cursor-pointer text-center">
-                            {originalImage ? (
-                                <canvas ref={canvasRef} className={`max-h-[300px] w-auto rounded-md object-contain ${getCanvasCursor()}`} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUpOrLeave} onMouseLeave={handleMouseUpOrLeave} />
-                            ) : (
+                         {originalImage ? (
+                            <canvas ref={canvasRef} className={`max-h-[300px] w-auto rounded-md object-contain ${getCanvasCursor()}`} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUpOrLeave} onMouseLeave={handleMouseUpOrLeave} />
+                        ) : (
+                            <label htmlFor="file-upload" className="cursor-pointer text-center">
                                 <div className="flex flex-col items-center text-dark-text-secondary">
                                     <UploadIcon className="w-12 h-12 mb-2" />
                                     <span className="font-semibold">Click to upload an image</span>
                                     <span className="text-sm">or generate one from a prompt</span>
                                 </div>
-                            )}
-                        </label>
+                            </label>
+                        )}
                         <input id="file-upload" type="file" className="hidden" accept="image/*" onChange={(e) => handleFileChange(e, setOriginalImage)} />
                         {fileName && <p className="text-xs text-dark-text-secondary mt-2 truncate max-w-full">{fileName}</p>}
                     </div>
                     {originalImage && (
                         <>
+                           <div className="flex justify-center gap-2">
+                                <label htmlFor="file-upload" className="flex items-center justify-center gap-2 p-2 rounded-md transition-colors text-sm bg-gray-700 hover:bg-gray-600 cursor-pointer">
+                                    <UploadIcon className="w-5 h-5"/> New
+                                </label>
+                                <ToolButton onClick={handleUndo} disabled={historyIndex <= 0} title="Undo"><UndoIcon className="w-5 h-5" /></ToolButton>
+                                <ToolButton onClick={handleRedo} disabled={historyIndex >= history.length - 1} title="Redo"><RedoIcon className="w-5 h-5" /></ToolButton>
+                                <ToolButton onClick={handleFullReset} title="Reset All"><ResetIcon className="w-5 h-5" /></ToolButton>
+                                <ToolButton onClick={() => setIsExportModalOpen(true)} title="Export"><DownloadIcon className="w-5 h-5" /></ToolButton>
+                            </div>
                            <div className="bg-gray-900/50 rounded-lg p-2">
                                 <p className="text-xs font-bold text-dark-text-secondary mb-2 px-2">CREATIVE TOOLS</p>
                                 <div className="grid grid-cols-3 sm:grid-cols-7 gap-2">
@@ -451,6 +612,13 @@ export const ImageStudio: React.FC = () => {
                             </div>
                             
                             {/* TOOL PANELS */}
+                            {subjectMask && (
+                                 <div className="bg-gray-900/50 rounded-lg p-4 space-y-3">
+                                    <p className="text-sm font-bold text-center">Subject Selected</p>
+                                    <p className="text-xs text-dark-text-secondary text-center">Mask applied. You can now act on this selection.</p>
+                                    <button onClick={handleRemoveBackground} className="w-full bg-brand-secondary text-white font-bold py-2 px-4 rounded-md hover:bg-green-600 disabled:bg-gray-500">Remove Background</button>
+                                </div>
+                            )}
                             {activeTool === 'harmonize' && (
                                  <div className="bg-gray-900/50 rounded-lg p-4 space-y-3">
                                     <label htmlFor="foreground-upload" className="w-full text-center cursor-pointer bg-gray-700 hover:bg-gray-600 p-3 rounded-md text-sm">
@@ -506,16 +674,30 @@ export const ImageStudio: React.FC = () => {
                             )}
                             {activeTool === 'adjust' && (
                                 <div className="bg-gray-900/50 rounded-lg p-4 space-y-3">
-                                    <input type="range" name="brightness" value={adjustments.brightness} onChange={(e) => setAdjustments(p=>({...p, brightness: +e.target.value}))} />
-                                    {/* ... other sliders ... */}
+                                    {Object.keys(adjustments).map(key => (
+                                         <div key={key} className="grid grid-cols-4 items-center">
+                                            <label className="text-xs capitalize col-span-1">{key.replace('Rotate', ' Rotate')}</label>
+                                            <input type="range" name={key}
+                                                min={key === 'blur' ? 0 : (key === 'hueRotate' ? 0 : 0)}
+                                                max={key === 'blur' ? 20 : (key === 'hueRotate' ? 360 : 200)}
+                                                value={adjustments[key as Adjustment]} 
+                                                onChange={(e) => {
+                                                    const newAdjustments = {...adjustments, [key]: +e.target.value};
+                                                    setAdjustments(newAdjustments);
+                                                    recordHistoryWithDebounce({ adjustments: newAdjustments });
+                                                }}
+                                                className="w-full col-span-3"
+                                            />
+                                        </div>
+                                    ))}
                                 </div>
                             )}
                              {activeTool === 'transform' && (
                                 <div className="bg-gray-900/50 rounded-lg p-4 grid grid-cols-2 gap-2">
-                                    <ToolButton onClick={() => setTransforms(p=>({ ...p, rotate: (p.rotate-90+360)%360}))}><RotateLeftIcon className="w-5 h-5"/>Rotate</ToolButton>
-                                    <ToolButton onClick={() => setTransforms(p=>({ ...p, rotate: (p.rotate+90)%360}))}><RotateRightIcon className="w-5 h-5"/>Rotate</ToolButton>
-                                    <ToolButton onClick={() => setTransforms(p=>({ ...p, flip: {...p.flip, horizontal:!p.flip.horizontal}}))}><FlipHorizontalIcon className="w-5 h-5"/>Flip</ToolButton>
-                                    <ToolButton onClick={() => setTransforms(p=>({ ...p, flip: {...p.flip, vertical:!p.flip.vertical}}))}><FlipVerticalIcon className="w-5 h-5"/>Flip</ToolButton>
+                                    <ToolButton onClick={() => { const t = { ...transforms, rotate: (transforms.rotate-90+360)%360}; setTransforms(t); recordHistory({transforms: t}); }}><RotateLeftIcon className="w-5 h-5"/>Rotate</ToolButton>
+                                    <ToolButton onClick={() => { const t = { ...transforms, rotate: (transforms.rotate+90)%360}; setTransforms(t); recordHistory({transforms: t}); }}><RotateRightIcon className="w-5 h-5"/>Rotate</ToolButton>
+                                    <ToolButton onClick={() => { const t = { ...transforms, flip: {...transforms.flip, horizontal:!transforms.flip.horizontal}}; setTransforms(t); recordHistory({transforms: t}); }}><FlipHorizontalIcon className="w-5 h-5"/>Flip</ToolButton>
+                                    <ToolButton onClick={() => { const t = { ...transforms, flip: {...transforms.flip, vertical:!transforms.flip.vertical}}; setTransforms(t); recordHistory({transforms: t}); }}><FlipVerticalIcon className="w-5 h-5"/>Flip</ToolButton>
                                 </div>
                             )}
                             {activeTool === 'crop' && cropRect && (
@@ -524,7 +706,6 @@ export const ImageStudio: React.FC = () => {
                                     <button onClick={() => { setActiveTool(null); setCropRect(null); }} className="flex items-center justify-center bg-gray-700 text-white font-bold py-2 px-4 rounded-md">Cancel</button>
                                 </div>
                             )}
-                            <div className="flex justify-end"><ToolButton onClick={handleReset}><ResetIcon className="w-5 h-5" /> Reset All</ToolButton></div>
                         </>
                     )}
                 </div>
@@ -532,7 +713,14 @@ export const ImageStudio: React.FC = () => {
                 {/* Generated Image Section */}
                 <div className="flex flex-col items-center justify-center bg-gray-900/50 rounded-lg p-4 border-2 border-dashed border-gray-600 min-h-[320px]">
                     {isLoading ? ( <div className="flex flex-col items-center text-dark-text-secondary"><LoadingSpinner /><p className="mt-2">Generating your masterpiece...</p></div>
-                    ) : generatedImage ? ( <img src={generatedImage} alt="Generated" className="max-h-80 rounded-md object-contain" />
+                    ) : generatedImage ? ( 
+                        <div className="text-center">
+                            <img src={generatedImage} alt="Generated" className="max-h-80 rounded-md object-contain" />
+                            <div className="flex gap-4 mt-4 justify-center">
+                                <button onClick={handleAcceptGeneratedImage} className="bg-brand-secondary hover:bg-green-600 text-white font-bold py-2 px-4 rounded-md">Accept</button>
+                                <button onClick={() => setGeneratedImage(null)} className="bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-md">Discard</button>
+                            </div>
+                        </div>
                     ) : ( <div className="text-center text-dark-text-secondary"><SparklesIcon className="w-12 h-12 mx-auto mb-2" /><p>Your AI-generated image will appear here.</p></div> )}
                 </div>
             </div>
@@ -546,6 +734,67 @@ export const ImageStudio: React.FC = () => {
                     <span>{originalImage ? 'Edit with AI' : 'Create Image'}</span>
                 </button>
             </div>
+
+            {isExportModalOpen && (
+                <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+                    <div className="bg-dark-surface rounded-xl shadow-2xl p-6 w-full max-w-md text-white">
+                        <h3 className="text-xl font-bold mb-4">Export Image</h3>
+                        
+                        <div className="mb-4">
+                            <label className="text-sm font-bold text-dark-text-secondary mb-2 block">Format</label>
+                            <div className="flex gap-2">
+                                <button 
+                                    onClick={() => setExportFormat('png')}
+                                    className={`flex-1 p-2 rounded-md text-sm transition-colors ${exportFormat === 'png' ? 'bg-brand-primary' : 'bg-gray-700 hover:bg-gray-600'}`}
+                                >
+                                    PNG
+                                </button>
+                                <button 
+                                    onClick={() => setExportFormat('jpeg')}
+                                    className={`flex-1 p-2 rounded-md text-sm transition-colors ${exportFormat === 'jpeg' ? 'bg-brand-primary' : 'bg-gray-700 hover:bg-gray-600'}`}
+                                >
+                                    JPEG
+                                </button>
+                            </div>
+                        </div>
+
+                        {exportFormat === 'jpeg' && (
+                            <div className="mb-4">
+                                <label htmlFor="quality" className="text-sm font-bold text-dark-text-secondary mb-2 block">Quality ({Math.round(exportQuality * 100)}%)</label>
+                                <input
+                                    id="quality"
+                                    type="range"
+                                    min="0.1"
+                                    max="1"
+                                    step="0.01"
+                                    value={exportQuality}
+                                    onChange={(e) => setExportQuality(parseFloat(e.target.value))}
+                                    className="w-full"
+                                />
+                            </div>
+                        )}
+                        
+                        <div className="mb-6">
+                            <label htmlFor="filename" className="text-sm font-bold text-dark-text-secondary mb-2 block">Filename</label>
+                            <div className="relative">
+                                <input
+                                    id="filename"
+                                    type="text"
+                                    value={exportFileName}
+                                    onChange={(e) => setExportFileName(e.target.value)}
+                                    className="w-full bg-gray-800 border border-gray-600 rounded-md p-2 pr-12"
+                                />
+                                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-dark-text-secondary">.{exportFormat}</span>
+                            </div>
+                        </div>
+
+                        <div className="flex justify-end gap-4">
+                            <button onClick={() => setIsExportModalOpen(false)} className="bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-md">Cancel</button>
+                            <button onClick={handleDownload} className="bg-brand-secondary hover:bg-green-600 text-white font-bold py-2 px-4 rounded-md">Download</button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

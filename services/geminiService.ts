@@ -64,3 +64,23 @@ export const generateTextStream = async (prompt: string, onChunk: (chunk: string
         onChunk(chunk.text);
     }
 };
+
+export const analyzeImageStream = async (prompt: string, base64Image: string, onChunk: (chunk: string) => void) => {
+    const imagePart = {
+        inlineData: {
+            data: base64Image.split(',')[1],
+            mimeType: getMimeType(base64Image),
+        },
+    };
+
+    const textPart = { text: prompt };
+
+    const response = await ai.models.generateContentStream({
+        model: 'gemini-2.5-flash',
+        contents: { parts: [imagePart, textPart] },
+    });
+
+    for await (const chunk of response) {
+        onChunk(chunk.text);
+    }
+};
