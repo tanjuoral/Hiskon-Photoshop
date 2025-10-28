@@ -150,7 +150,7 @@ export const ImageStudio = forwardRef<ImageStudioRef, ImageStudioProps>(({ activ
     };
     const handleRedo = () => {
         if (historyIndex < history.length - 1) {
-            setHistoryIndex(prev => prev - 1);
+            setHistoryIndex(prev => prev + 1);
         }
     };
 
